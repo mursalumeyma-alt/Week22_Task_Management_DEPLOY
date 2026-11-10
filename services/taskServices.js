@@ -1,6 +1,7 @@
+
 import prisma from "../lib/prisma.js";
 
-// Simpler approach - just get all tasks
+// Get all tasks belonging to a user
 export async function getAllTasks(userId) {
   return await prisma.task.findMany({
     where: { userId },
@@ -11,262 +12,221 @@ export async function getAllTasks(userId) {
 
 // Get task by ID
 export async function getTaskById(id, userId) {
-  try {
-    const task = await prisma.task.findFirst({
-      where: {
-        id,
-        userId,
-      },
-      include: { subtasks: true },
-    });
+  const task = await prisma.task.findFirst({
+    where: {
+      id,
+      userId,
+    },
+    include: { subtasks: true },
+  });
 
-    if (!task) {
-      throw new Error("Task not found");
-    }
-
-    return task;
-  } catch (error) {
-    throw new Error(`Error retrieving task: ${error.message}`);
+  if (!task) {
+    throw new Error("Task not found");
   }
+
+  return task;
 }
 
-// Create new task
+// Create a new task
 export async function createTask(taskData, userId) {
-  try {
-    // Convert status from kebab-case to snake_case for Prisma enum
-    const status =
-      taskData.status === "in-progress" ? "in_progress" : taskData.status;
+  const status =
+    taskData.status === "in-progress"
+      ? "in_progress"
+      : taskData.status;
 
-    const task = await prisma.task.create({
-      data: {
-        title: taskData.title,
-        description: taskData.description,
-        status: status,
-        priority: taskData.priority,
-        dueDate: taskData.dueDate ? new Date(taskData.dueDate) : null,
-        assignedTo: taskData.assignedTo,
-        userId: userId,
-        subtasks: {
-          create: taskData.subtasks || [],
-        },
+  return await prisma.task.create({
+    data: {
+      title: taskData.title,
+      description: taskData.description,
+      status,
+      priority: taskData.priority,
+      dueDate: taskData.dueDate
+        ? new Date(taskData.dueDate)
+        : null,
+      assignedTo: taskData.assignedTo,
+      userId,
+      subtasks: {
+        create: taskData.subtasks || [],
       },
-      include: {
-        subtasks: true,
-      },
-    });
-
-    return task;
-  } catch (error) {
-    throw new Error(`Error creating task: ${error.message}`);
-  }
+    },
+    include: {
+      subtasks: true,
+    },
+  });
 }
 
-// Update task
+// Update a task
 export async function updateTask(id, updateData, userId) {
-  try {
-    // Check if task exists
-    const existingTask = await prisma.task.findFirst({
-      where: {
-        id,
-        userId,
-      },
-    });
+  const existingTask = await prisma.task.findFirst({
+    where: {
+      id,
+      userId,
+    },
+  });
 
-    if (!existingTask) {
-      throw new Error("Task not found");
-    }
-
-    // Convert status from kebab-case to snake_case for Prisma enum
-    if (updateData.status && updateData.status === "in-progress") {
-      updateData.status = "in_progress";
-    }
-
-    // Handle dueDate conversion
-    if (updateData.dueDate) {
-      updateData.dueDate = new Date(updateData.dueDate);
-    }
-
-    const task = await prisma.task.update({
-      where: { id },
-      data: updateData,
-      include: {
-        subtasks: true,
-      },
-    });
-
-    return task;
-  } catch (error) {
-    throw new Error(`Error updating task: ${error.message}`);
+  if (!existingTask) {
+    throw new Error("Task not found");
   }
+
+  const data = { ...updateData };
+
+  // Prevent changing task ownership
+  delete data.id;
+  delete data.userId;
+  delete data.createdAt;
+  delete data.updatedAt;
+  delete data.subtasks;
+
+  // Convert status for Prisma enum
+  if (data.status === "in-progress") {
+    data.status = "in_progress";
+  }
+
+  // Handle due date conversion
+  if (data.dueDate !== undefined && data.dueDate !== null) {
+    data.dueDate = new Date(data.dueDate);
+  }
+
+  return await prisma.task.update({
+    where: { id },
+    data,
+    include: {
+      subtasks: true,
+    },
+  });
 }
 
-// Delete task
+// Delete a task
 export async function deleteTask(id, userId) {
-  try {
-    // Check if task exists
-    const existingTask = await prisma.task.findFirst({
-      where: {
-        id,
-        userId,
-      },
-      include: {
-        subtasks: true,
-      },
-    });
+  const existingTask = await prisma.task.findFirst({
+    where: {
+      id,
+      userId,
+    },
+    include: {
+      subtasks: true,
+    },
+  });
 
-    if (!existingTask) {
-      throw new Error("Task not found");
-    }
-
-    // Delete the task (subtasks will be deleted automatically due to cascade)
-    await prisma.task.delete({
-      where: { id },
-    });
-
-    return existingTask;
-  } catch (error) {
-    throw new Error(`Error deleting task: ${error.message}`);
+  if (!existingTask) {
+    throw new Error("Task not found");
   }
+
+  await prisma.task.delete({
+    where: { id },
+  });
+
+  return existingTask;
 }
 
-// Create subtask
+// Create a subtask
 export async function createSubtask(taskId, subtaskData, userId) {
-  try {
-    // First verify the task belongs to the user
-    const task = await prisma.task.findFirst({
-      where: {
-        id: taskId,
+  const task = await prisma.task.findFirst({
+    where: {
+      id: taskId,
+      userId,
+    },
+  });
+
+  if (!task) {
+    throw new Error("Task not found or access denied");
+  }
+
+  return await prisma.subtask.create({
+    data: {
+      title: subtaskData.title,
+      description: subtaskData.description,
+      completed: subtaskData.completed ?? false,
+      taskId,
+    },
+  });
+}
+
+// Update a subtask
+export async function updateSubtask(id, updateData, userId) {
+  const subtask = await prisma.subtask.findFirst({
+    where: {
+      id,
+      task: {
         userId,
       },
-    });
+    },
+  });
 
-    if (!task) {
-      throw new Error("Task not found or access denied");
-    }
-
-    const subtask = await prisma.subtask.create({
-      data: {
-        title: subtaskData.title,
-        description: subtaskData.description,
-        completed: subtaskData.completed || false,
-        taskId: taskId,
-      },
-    });
-
-    return subtask;
-  } catch (error) {
-    throw new Error(`Error creating subtask: ${error.message}`);
+  if (!subtask) {
+    throw new Error("Subtask not found or access denied");
   }
+
+  const data = { ...updateData };
+
+  // Prevent changing subtask ownership or identifiers
+  delete data.id;
+  delete data.taskId;
+  delete data.createdAt;
+  delete data.updatedAt;
+
+  return await prisma.subtask.update({
+    where: { id },
+    data,
+  });
 }
 
-// Update subtask
-export async function updateSubtask(id, updateData, userId) {
-  try {
-    // First verify the subtask belongs to a task owned by the user
-    const subtask = await prisma.subtask.findFirst({
-      where: {
-        id,
-        task: {
-          userId,
-        },
-      },
-      include: {
-        task: true,
-      },
-    });
-
-    if (!subtask) {
-      throw new Error("Subtask not found or access denied");
-    }
-
-    const updatedSubtask = await prisma.subtask.update({
-      where: { id },
-      data: updateData,
-    });
-
-    return updatedSubtask;
-  } catch (error) {
-    throw new Error(`Error updating subtask: ${error.message}`);
-  }
-}
-
-// Delete subtask
+// Delete a subtask
 export async function deleteSubtask(id, userId) {
-  try {
-    // First verify the subtask belongs to a task owned by the user
-    const subtask = await prisma.subtask.findFirst({
-      where: {
-        id,
-        task: {
-          userId,
-        },
+  const subtask = await prisma.subtask.findFirst({
+    where: {
+      id,
+      task: {
+        userId,
       },
-      include: {
-        task: true,
-      },
-    });
+    },
+  });
 
-    if (!subtask) {
-      throw new Error("Subtask not found or access denied");
-    }
-
-    const deletedSubtask = await prisma.subtask.delete({
-      where: { id },
-    });
-
-    return deletedSubtask;
-  } catch (error) {
-    throw new Error(`Error deleting subtask: ${error.message}`);
+  if (!subtask) {
+    throw new Error("Subtask not found or access denied");
   }
+
+  return await prisma.subtask.delete({
+    where: { id },
+  });
 }
 
-// Get subtask by ID
+// Get a subtask by ID
 export async function getSubtaskById(id, userId) {
-  try {
-    const subtask = await prisma.subtask.findFirst({
-      where: {
-        id,
-        task: {
-          userId,
-        },
+  const subtask = await prisma.subtask.findFirst({
+    where: {
+      id,
+      task: {
+        userId,
       },
-      include: {
-        task: true,
-      },
-    });
+    },
+    include: {
+      task: true,
+    },
+  });
 
-    if (!subtask) {
-      throw new Error("Subtask not found or access denied");
-    }
-
-    return subtask;
-  } catch (error) {
-    throw new Error(`Error retrieving subtask: ${error.message}`);
+  if (!subtask) {
+    throw new Error("Subtask not found or access denied");
   }
+
+  return subtask;
 }
 
 // Get all subtasks for a specific task
 export async function getSubtasksByTaskId(taskId, userId) {
-  try {
-    // First verify the task belongs to the user
-    const task = await prisma.task.findFirst({
-      where: {
-        id: taskId,
-        userId,
-      },
-    });
+  const task = await prisma.task.findFirst({
+    where: {
+      id: taskId,
+      userId,
+    },
+  });
 
-    if (!task) {
-      throw new Error("Task not found or access denied");
-    }
-
-    const subtasks = await prisma.subtask.findMany({
-      where: { taskId },
-      orderBy: { createdAt: "asc" },
-    });
-
-    return subtasks;
-  } catch (error) {
-    throw new Error(`Error retrieving subtasks: ${error.message}`);
+  if (!task) {
+    throw new Error("Task not found or access denied");
   }
+
+  return await prisma.subtask.findMany({
+    where: { taskId },
+    orderBy: { createdAt: "asc" },
+  });
 }
